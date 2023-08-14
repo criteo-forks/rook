@@ -16,10 +16,12 @@ limitations under the License.
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -31,26 +33,36 @@ import (
 
 const emptyApplicationName = `{"":{}}`
 
+var emptyParameters = map[string]string{}
+
 func TestCreateECPoolWithOverwrites(t *testing.T) {
-	testCreateECPool(t, true, "")
+	testCreateECPool(t, true, "", emptyParameters)
 }
 
 func TestCreateECPoolWithoutOverwrites(t *testing.T) {
-	testCreateECPool(t, false, "")
+	testCreateECPool(t, false, "", emptyParameters)
 }
 
 func TestCreateECPoolWithCompression(t *testing.T) {
-	testCreateECPool(t, false, "aggressive")
-	testCreateECPool(t, true, "none")
+	testCreateECPool(t, false, "aggressive", emptyParameters)
+	testCreateECPool(t, true, "none", emptyParameters)
 }
 
-func testCreateECPool(t *testing.T, overwrite bool, compressionMode string) {
+func TestCreateECPoolWithPgNumMin(t *testing.T) {
+	parameters := map[string]string{"pg_num_min": "128"}
+	testCreateECPool(t, false, "", parameters)
+}
+
+func testCreateECPool(t *testing.T, overwrite bool, compressionMode string, parameters map[string]string) {
 	compressionModeCreated := false
+	pgNumMinSet, pgNumSet, pgpNumSet := false, false, false
+	expectedPgNumMin, expectedPgNumMinSet := parameters["pg_num_min"]
 	p := cephv1.NamedPoolSpec{
 		Name: "mypool",
 		PoolSpec: cephv1.PoolSpec{
 			FailureDomain: "host",
 			ErasureCoded:  cephv1.ErasureCodedSpec{},
+			Parameters:    parameters,
 		},
 	}
 	if compressionMode != "" {
@@ -63,9 +75,15 @@ func testCreateECPool(t *testing.T, overwrite bool, compressionMode string) {
 		if args[1] == "pool" {
 			if args[2] == "create" {
 				assert.Equal(t, "mypool", args[3])
+				assert.Equal(t, DefaultPGCount, args[4])
 				assert.Equal(t, "erasure", args[5])
 				assert.Equal(t, "mypoolprofile", args[6])
 				return "", nil
+			}
+			if args[2] == "get" {
+				assert.Equal(t, "mypool", args[3])
+				assert.Equal(t, "all", args[4])
+				return "{\"pool\":\"mypool\",\"pool_id\":5,\"size\":3,\"min_size\":2,\"pg_num\":8,\"pgp_num\":8,\"crush_rule\":\"mypool\",\"hashpspool\":true,\"nodelete\":false,\"nopgchange\":false,\"nosizechange\":false,\"write_fadvise_dontneed\":false,\"noscrub\":false,\"nodeep-scrub\":false,\"use_gmt_hitset\":true,\"fast_read\":0,\"recovery_priority\":5,\"pg_autoscale_mode\":\"on\",\"pg_autoscale_bias\":4,\"bulk\":false}", nil
 			}
 			if args[2] == "set" {
 				assert.Equal(t, "mypool", args[3])
@@ -78,6 +96,27 @@ func testCreateECPool(t *testing.T, overwrite bool, compressionMode string) {
 					assert.Equal(t, compressionMode, args[5])
 					compressionModeCreated = true
 					return "", nil
+				}
+				if args[4] == "pg_autoscale_mode" {
+					assert.True(t, args[5] == "on" || args[5] == "off")
+					return "", nil
+				}
+				if expectedPgNumMinSet {
+					if args[4] == "pg_num_min" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgNumMinSet = true
+						return "", nil
+					}
+					if args[4] == "pg_num" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgNumSet = true
+						return "", nil
+					}
+					if args[4] == "pgp_num" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgpNumSet = true
+						return "", nil
+					}
 				}
 			}
 			if args[2] == "application" {
@@ -99,6 +138,12 @@ func testCreateECPool(t *testing.T, overwrite bool, compressionMode string) {
 		assert.True(t, compressionModeCreated)
 	} else {
 		assert.False(t, compressionModeCreated)
+	}
+
+	if expectedPgNumMinSet {
+		assert.True(t, pgNumMinSet)
+		assert.True(t, pgNumSet)
+		assert.True(t, pgpNumSet)
 	}
 }
 
@@ -150,21 +195,29 @@ func TestSetPoolApplication(t *testing.T) {
 }
 
 func TestCreateReplicaPoolWithFailureDomain(t *testing.T) {
-	testCreateReplicaPool(t, "osd", "mycrushroot", "", "")
+	testCreateReplicaPool(t, "osd", "mycrushroot", "", "", emptyParameters)
 }
 
 func TestCreateReplicaPoolWithDeviceClass(t *testing.T) {
-	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "")
+	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "", emptyParameters)
 }
 
 func TestCreateReplicaPoolWithCompression(t *testing.T) {
-	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "passive")
-	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "force")
+	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "passive", emptyParameters)
+	testCreateReplicaPool(t, "osd", "mycrushroot", "hdd", "force", emptyParameters)
 }
 
-func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, compressionMode string) {
+func TestCreateReplicaPoolWithPgNumMin(t *testing.T) {
+	parameters := map[string]string{"pg_num_min": "128"}
+	testCreateReplicaPool(t, "osd", "mycrushroot", "", "", parameters)
+}
+
+func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, compressionMode string, parameters map[string]string) {
 	crushRuleCreated := false
+	poolCreated := false
 	compressionModeCreated := false
+	pgNumMinSet, pgNumSet, pgpNumSet := false, false, false
+	expectedPgNumMin, expectedPgNumMinSet := parameters["pg_num_min"]
 	executor := &exectest.MockExecutor{}
 	context := &clusterd.Context{Executor: executor}
 	executor.MockExecuteCommandWithOutput = func(command string, args ...string) (string, error) {
@@ -172,10 +225,20 @@ func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, 
 		if args[1] == "pool" {
 			if args[2] == "create" {
 				assert.Equal(t, "mypool", args[3])
+				assert.Equal(t, DefaultPGCount, args[4])
 				assert.Equal(t, "replicated", args[5])
 				assert.Equal(t, "--size", args[7])
 				assert.Equal(t, "12345", args[8])
+				poolCreated = true
 				return "", nil
+			}
+			if args[2] == "get" {
+				assert.Equal(t, "mypool", args[3])
+				if !poolCreated {
+					return "", errors.New("pool doesn't exist")
+				} else {
+					return "{\"pool\":\"mypool\",\"pool_id\":5,\"size\":3,\"min_size\":2,\"pg_num\":8,\"pgp_num\":8,\"crush_rule\":\"mypool\",\"hashpspool\":true,\"nodelete\":false,\"nopgchange\":false,\"nosizechange\":false,\"write_fadvise_dontneed\":false,\"noscrub\":false,\"nodeep-scrub\":false,\"use_gmt_hitset\":true,\"fast_read\":0,\"recovery_priority\":5,\"pg_autoscale_mode\":\"on\",\"pg_autoscale_bias\":4,\"bulk\":false}", nil
+				}
 			}
 			if args[2] == "set" {
 				assert.Equal(t, "mypool", args[3])
@@ -185,6 +248,20 @@ func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, 
 				if args[4] == "compression_mode" {
 					assert.Equal(t, compressionMode, args[5])
 					compressionModeCreated = true
+				}
+				if expectedPgNumMinSet {
+					if args[4] == "pg_num_min" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgNumMinSet = true
+					}
+					if args[4] == "pg_num" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgNumSet = true
+					}
+					if args[4] == "pgp_num" {
+						assert.Equal(t, expectedPgNumMin, args[5])
+						pgpNumSet = true
+					}
 				}
 				return "", nil
 			}
@@ -199,26 +276,36 @@ func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, 
 			}
 		}
 		if args[1] == "crush" {
-			crushRuleCreated = true
 			assert.Equal(t, "rule", args[2])
-			assert.Equal(t, "create-replicated", args[3])
-			assert.Equal(t, "mypool", args[4])
-			if crushRoot == "" {
-				assert.Equal(t, "cluster-crush-root", args[5])
-			} else {
-				assert.Equal(t, crushRoot, args[5])
+			if args[3] == "create-replicated" {
+				crushRuleCreated = true
+				assert.Equal(t, "create-replicated", args[3])
+				assert.Equal(t, "mypool", args[4])
+				if crushRoot == "" {
+					assert.Equal(t, "cluster-crush-root", args[5])
+				} else {
+					assert.Equal(t, crushRoot, args[5])
+				}
+				if failureDomain == "" {
+					assert.Equal(t, "host", args[6])
+				} else {
+					assert.Equal(t, failureDomain, args[6])
+				}
+				if deviceClass == "" {
+					assert.False(t, testIsStringInSlice("hdd", args))
+				} else {
+					assert.Equal(t, deviceClass, args[7])
+				}
+				return "", nil
 			}
-			if failureDomain == "" {
-				assert.Equal(t, "host", args[6])
-			} else {
-				assert.Equal(t, failureDomain, args[6])
+			if args[3] == "dump" {
+				assert.Equal(t, "mypool", args[4])
+				if crushRuleCreated {
+					return `{"rule_id":15,"rule_name":"mypool","ruleset":15,"type":1,"min_size":1,"max_size":10,"steps":[{"op":"take","item":-2,"item_name":"default"},{"op":"chooseleaf_firstn","num":0,"type":"` + failureDomain + `"},{"op":"emit"}]}`, nil
+				} else {
+					return "", errors.New("crush rule doesn't exist")
+				}
 			}
-			if deviceClass == "" {
-				assert.False(t, testIsStringInSlice("hdd", args))
-			} else {
-				assert.Equal(t, deviceClass, args[7])
-			}
-			return "", nil
 		}
 		return "", errors.Errorf("unexpected ceph command %q", args)
 	}
@@ -228,6 +315,7 @@ func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, 
 		PoolSpec: cephv1.PoolSpec{
 			FailureDomain: failureDomain, CrushRoot: crushRoot, DeviceClass: deviceClass,
 			Replicated: cephv1.ReplicatedSpec{Size: 12345},
+			Parameters: parameters,
 		},
 	}
 	if compressionMode != "" {
@@ -241,6 +329,11 @@ func testCreateReplicaPool(t *testing.T, failureDomain, crushRoot, deviceClass, 
 		assert.True(t, compressionModeCreated)
 	} else {
 		assert.False(t, compressionModeCreated)
+	}
+	if expectedPgNumMinSet {
+		assert.True(t, pgNumMinSet)
+		assert.True(t, pgNumSet)
+		assert.True(t, pgpNumSet)
 	}
 }
 
@@ -608,4 +701,205 @@ func testCreateHybridCrushRule(t *testing.T, alreadyExists bool) {
 func hasCrushtool() bool {
 	_, err := exec.LookPath("crushtool")
 	return err == nil
+}
+
+func TestSetPgNumMinMaxPropertiesDoesNothing(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinMaxPropertiesDontChangeExistingMinMaxSettings(t *testing.T) {
+	pgNumMin := 8
+	pgNumMax := 32
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgNumMin:        &pgNumMin,
+		PgNumMax:        &pgNumMax,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinLowerThanPgNum(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_min": "4"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_num_min 4",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinHigherThanPgNumWithAutoScalingOn(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_min": "16"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_autoscale_mode off",
+		"osd pool set mypool pg_num 16",
+		"osd pool set mypool pgp_num 16",
+		"osd pool set mypool pg_num_min 16",
+		"osd pool set mypool pg_autoscale_mode on",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinHigherThanPgNumWithAutoScalingOff(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_min": "16"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "off",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_num 16",
+		"osd pool set mypool pgp_num 16",
+		"osd pool set mypool pg_num_min 16",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMaxHigherThanPgNum(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_max": "16"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_num_max 16",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMaxLowerThanPgNumWithAutoScalingOn(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_max": "4"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_autoscale_mode off",
+		"osd pool set mypool pg_num 4",
+		"osd pool set mypool pgp_num 4",
+		"osd pool set mypool pg_num_max 4",
+		"osd pool set mypool pg_autoscale_mode on",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMaxLowerThanPgNumWithAutoScalingOff(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_max": "4"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "off",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_num 4",
+		"osd pool set mypool pgp_num 4",
+		"osd pool set mypool pg_num_max 4",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinMaxWithAutoScalingOn(t *testing.T) {
+	got, _ := testSetPgNumMinMaxProperties(map[string]string{"pg_num_min": "16", "pg_num_max": "32"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{
+		"osd pool set mypool pg_autoscale_mode off",
+		"osd pool set mypool pg_num 16",
+		"osd pool set mypool pgp_num 16",
+		"osd pool set mypool pg_num_min 16",
+		"osd pool set mypool pg_num_max 32",
+		"osd pool set mypool pg_autoscale_mode on",
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func TestSetPgNumMinMaxPropertiesCheckConsistency(t *testing.T) {
+	got, err := testSetPgNumMinMaxProperties(map[string]string{"pg_num_min": "32", "pg_num_max": "16"}, &CephStoragePoolDetails{
+		PgNum:           8,
+		PgpNum:          8,
+		PgAutoScaleMode: "on",
+	})
+	wanted := []string{}
+
+	if err == nil {
+		t.Errorf("SetPgNumMinMaxProperties shouldn't have return an error")
+	}
+
+	wantedError := "pg_num_min (32) can't be greater than pg_num_max (16) for pool \"mypool\""
+	if wantedError != err.Error() {
+		t.Errorf("got %v want %v", err.Error(), wantedError)
+	}
+
+	if !reflect.DeepEqual(got, wanted) {
+		t.Errorf("got %v want %v", got, wanted)
+	}
+}
+
+func testSetPgNumMinMaxProperties(poolParameters map[string]string, poolState *CephStoragePoolDetails) ([]string, error) {
+	executor := &exectest.MockExecutor{}
+	context := &clusterd.Context{Executor: executor}
+	p := cephv1.NamedPoolSpec{
+		Name: "mypool",
+		PoolSpec: cephv1.PoolSpec{
+			Parameters: poolParameters,
+		},
+	}
+	calls := make([]string, 0)
+	executor.MockExecuteCommandWithOutput = func(command string, args ...string) (string, error) {
+		if len(args) > 4 {
+			if args[1] == "pool" && args[2] == "get" {
+				data, err := json.Marshal(poolState)
+				if err != nil {
+					return "", err
+				}
+				return string(data), nil
+			}
+		}
+		calls = append(calls, strings.Join(args[0:6], " "))
+		return "", nil
+	}
+	err := setPgNumMinMaxProperties(context, AdminTestClusterInfo("mycluster"), p)
+	return calls, err
 }
