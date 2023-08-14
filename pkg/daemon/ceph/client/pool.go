@@ -35,8 +35,13 @@ const (
 	reallyConfirmFlag       = "--yes-i-really-really-mean-it"
 	targetSizeRatioProperty = "target_size_ratio"
 	CompressionModeProperty = "compression_mode"
+	PgNumProperty           = "pg_num"
+	PgpNumProperty          = "pgp_num"
+	PgNumMinProperty        = "pg_num_min"
+	PgNumMaxProperty        = "pg_num_max"
 	PgAutoscaleModeProperty = "pg_autoscale_mode"
 	PgAutoscaleModeOn       = "on"
+	PgAutoscaleModeOff      = "off"
 )
 
 type CephStoragePoolSummary struct {
@@ -55,6 +60,11 @@ type CephStoragePoolDetails struct {
 	TargetSizeRatio        float64 `json:"target_size_ratio,omitempty"`
 	RequireSafeReplicaSize bool    `json:"requireSafeReplicaSize,omitempty"`
 	CrushRule              string  `json:"crush_rule"`
+	PgNum                  uint    `json:"pg_num"`
+	PgpNum                 uint    `json:"pgp_num"`
+	PgNumMin               *int    `json:"pg_num_min"`
+	PgNumMax               *int    `json:"pg_num_max"`
+	PgAutoScaleMode        string  `json:"pg_autoscale_mode"`
 }
 
 type CephStoragePoolStats struct {
@@ -159,7 +169,7 @@ func ParsePoolDetails(in []byte) (CephStoragePoolDetails, error) {
 	// up the JSON.  A single pool details object is repeatedly used to unmarshal each JSON snippet into.
 	// Since previously set fields remain intact if they are not overwritten, the result is the JSON
 	// unmarshalling of all properties in the response.
-	var poolDetails CephStoragePoolDetails
+	poolDetails := CephStoragePoolDetails{}
 	poolDetailsUnits := strings.Split(string(in), "}{")
 	for i := range poolDetailsUnits {
 		pdu := poolDetailsUnits[i]
@@ -186,6 +196,23 @@ func CreatePoolWithPGs(context *clusterd.Context, clusterInfo *ClusterInfo, clus
 	if pool.Name == "" {
 		return errors.New("pool name must be specified")
 	}
+
+	// honor pg_num_min if provided by user
+	if pgNumMinStr, found := pool.Parameters[PgNumMinProperty]; found {
+		pgNumMin, err := strconv.Atoi(pgNumMinStr)
+		if err != nil {
+			return errors.Errorf("failed to parse pg_num_min parameter of pool %q. %v", pool.Name, err)
+		}
+		pgNum, err := strconv.Atoi(pgCount)
+		if err != nil {
+			return errors.Errorf("failed to parse pgCount of pool %q. %v", pool.Name, err)
+		}
+
+		if pgNum < pgNumMin {
+			pgCount = strconv.Itoa(pgNumMin)
+		}
+	}
+
 	if pool.IsReplicated() {
 		return createReplicatedPoolForApp(context, clusterInfo, clusterSpec, pool, pgCount, appName)
 	}
@@ -280,6 +307,143 @@ func givePoolAppTag(context *clusterd.Context, clusterInfo *ClusterInfo, poolNam
 	return nil
 }
 
+func setPgNumMinMaxProperties(context *clusterd.Context, clusterInfo *ClusterInfo, pool cephv1.NamedPoolSpec) error {
+	poolDetails, err := GetPoolDetails(context, clusterInfo, pool.Name)
+	if err != nil {
+		return err
+	}
+
+	needToRestoreAutoScaler := (PgAutoscaleModeOn == poolDetails.PgAutoScaleMode)
+	curPgNum := poolDetails.PgNum
+	curPgNumMin := -1
+	curPgNumMax := -1
+	var wantedPgNumMin int
+	var wantedPgNumMax int
+
+	if poolDetails.PgNumMin != nil {
+		curPgNumMin = (*poolDetails.PgNumMin)
+	}
+	if poolDetails.PgNumMax != nil {
+		curPgNumMax = (*poolDetails.PgNumMax)
+	}
+
+	// parse pg_num_min and ensure consistency with pg_num_max if already set
+	if wantedPgNumMinStr, found := pool.Parameters[PgNumMinProperty]; found {
+		wantedPgNumMin, err = strconv.Atoi(wantedPgNumMinStr)
+		if err != nil {
+			logger.Errorf("failed to parse pg_num_min parameter of pool %q. %v", pool.Name, err)
+			wantedPgNumMin = curPgNumMin
+		}
+	} else {
+		wantedPgNumMin = curPgNumMin
+	}
+
+	// parse pg_num_max and ensure consistency with pg_num_min if already set
+	if wantedPgNumMaxStr, found := pool.Parameters[PgNumMaxProperty]; found {
+		wantedPgNumMax, err = strconv.Atoi(wantedPgNumMaxStr)
+		if err != nil {
+			logger.Errorf("failed to parse pg_num_max parameter of pool %q. %v", pool.Name, err)
+			wantedPgNumMax = curPgNumMax
+		}
+	} else {
+		wantedPgNumMax = curPgNumMax
+	}
+
+	if wantedPgNumMin != -1 && wantedPgNumMax != -1 && wantedPgNumMin > wantedPgNumMax {
+		return errors.Errorf("pg_num_min (%d) can't be greater than pg_num_max (%d) for pool %q", wantedPgNumMin, wantedPgNumMax, pool.Name)
+	}
+
+	if wantedPgNumMin == curPgNumMin && wantedPgNumMax == curPgNumMax {
+		// nothing to change
+		return nil
+	}
+
+	// NB: pg autoscaler need to be disabled while ajusting pg_num_min / pg_num_max because
+	// modifying these constraints may require to also adjust pg_num / pgp_num (ceph forbids
+	// to increase pg_num_min above pg_num). Without stopping autoscaler, there is a risk
+	// to have one of ceph calls to fail if autoscaler kicks-in in the middle.
+
+	// restore pg autoscaler if disabled during adjustment of pg_num_min & pg_num_max
+	defer func() {
+		if poolDetails.PgAutoScaleMode == PgAutoscaleModeOff && needToRestoreAutoScaler {
+			SetPoolProperty(context, clusterInfo, pool.Name, PgAutoscaleModeProperty, PgAutoscaleModeOn)
+		}
+	}()
+
+	if wantedPgNumMin != curPgNumMin {
+		if wantedPgNumMin > int(curPgNum) {
+			// number of PG is below expected pg_num_min, we must increase pg(p)_num before adjusting pg_num_min
+			// pg_autoscale_mode need to be disabled during the operation to make process reliable
+			if poolDetails.PgAutoScaleMode == PgAutoscaleModeOn {
+				err = SetPoolProperty(context, clusterInfo, pool.Name, PgAutoscaleModeProperty, PgAutoscaleModeOff)
+				if err != nil {
+					return errors.Wrapf(err, "failed to disable pg autoscaler on pool %q before applying pg_num_min", pool.Name)
+				}
+				poolDetails.PgAutoScaleMode = PgAutoscaleModeOff
+			}
+
+			err = SetPoolProperty(context, clusterInfo, pool.Name, PgNumProperty, strconv.Itoa(wantedPgNumMin))
+			if err != nil {
+				return errors.Wrapf(err, "failed to align pg_num to pg_num_min for pool %q", pool.Name)
+			}
+			curPgNum = uint(wantedPgNumMin)
+
+			err = SetPoolProperty(context, clusterInfo, pool.Name, PgpNumProperty, strconv.Itoa(wantedPgNumMin))
+			if err != nil {
+				return errors.Wrapf(err, "failed to align pgp_num to pg_num_min for pool %q", pool.Name)
+			}
+		}
+
+		err := SetPoolProperty(context, clusterInfo, pool.Name, PgNumMinProperty, strconv.Itoa(wantedPgNumMin))
+		if err != nil {
+			return errors.Wrapf(err, "failed to set pg_num_min quota for pool %q", pool.Name)
+		}
+		curPgNumMin = wantedPgNumMin
+	}
+
+	if wantedPgNumMax != curPgNumMax {
+		if wantedPgNumMax < int(curPgNum) {
+			// number of PG is above expected pg_num_max, we must decrease pg(p)_num before adjusting pg_num_max
+			// pg_autoscale_mode need to be disabled during the operation to make process reliable
+			if poolDetails.PgAutoScaleMode == PgAutoscaleModeOn {
+				err = SetPoolProperty(context, clusterInfo, pool.Name, PgAutoscaleModeProperty, PgAutoscaleModeOff)
+				if err != nil {
+					return errors.Wrapf(err, "failed to disable pg autoscaler on pool %q before applying pg_num_max", pool.Name)
+				}
+				poolDetails.PgAutoScaleMode = PgAutoscaleModeOff
+			}
+
+			err = SetPoolProperty(context, clusterInfo, pool.Name, PgNumProperty, strconv.Itoa(wantedPgNumMax))
+			if err != nil {
+				return errors.Wrapf(err, "failed to align pg_num to pg_num_max for pool %q", pool.Name)
+			}
+			curPgNum = uint(wantedPgNumMax)
+
+			err = SetPoolProperty(context, clusterInfo, pool.Name, PgpNumProperty, strconv.Itoa(wantedPgNumMax))
+			if err != nil {
+				return errors.Wrapf(err, "failed to align pgp_num to pg_num_min for pool %q", pool.Name)
+			}
+		}
+
+		err := SetPoolProperty(context, clusterInfo, pool.Name, PgNumMaxProperty, strconv.Itoa(wantedPgNumMax))
+		if err != nil {
+			return errors.Wrapf(err, "failed to set pg_num_max quota for pool %q", pool.Name)
+		}
+	}
+
+	return nil
+}
+
+func isASpecificallyManagedPoolProperty(propName string) bool {
+	switch propName {
+	case PgNumMinProperty:
+		return true
+	case PgNumMaxProperty:
+		return true
+	}
+	return false
+}
+
 func setCommonPoolProperties(context *clusterd.Context, clusterInfo *ClusterInfo, pool cephv1.NamedPoolSpec, appName string) error {
 	if len(pool.Parameters) == 0 {
 		pool.Parameters = make(map[string]string)
@@ -295,6 +459,10 @@ func setCommonPoolProperties(context *clusterd.Context, clusterInfo *ClusterInfo
 
 	// Apply properties
 	for propName, propValue := range pool.Parameters {
+		if isASpecificallyManagedPoolProperty(propName) {
+			continue
+		}
+
 		err := SetPoolProperty(context, clusterInfo, pool.Name, propName, propValue)
 		if err != nil {
 			logger.Errorf("failed to set property %q to pool %q to %q. %v", propName, pool.Name, propValue, err)
@@ -401,6 +569,11 @@ func createECPoolForApp(context *clusterd.Context, clusterInfo *ClusterInfo, ecP
 		}
 	}
 
+	// update pg_num_min/pg_num_max properties
+	if err := setPgNumMinMaxProperties(context, clusterInfo, pool); err != nil {
+		return err
+	}
+
 	if err = setCommonPoolProperties(context, clusterInfo, pool, appName); err != nil {
 		return err
 	}
@@ -462,6 +635,11 @@ func createReplicatedPoolForApp(context *clusterd.Context, clusterInfo *ClusterI
 				return errors.Wrapf(err, "failed to set size property to replicated pool %q to %d", pool.Name, pool.Replicated.Size)
 			}
 		}
+	}
+
+	// update pg_num_min/pg_num_max properties
+	if err := setPgNumMinMaxProperties(context, clusterInfo, pool); err != nil {
+		return err
 	}
 
 	// update the common pool properties
