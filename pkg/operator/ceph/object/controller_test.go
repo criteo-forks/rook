@@ -483,6 +483,10 @@ func TestCephObjectStoreController(t *testing.T) {
 				if args[0] == "versions" {
 					return dummyVersionsRaw, nil
 				}
+				if args[0] == "osd" && args[1] == "pool" && args[2] == "get" && len(args) > 4 && args[4] == "all" {
+					// pool details, requested once the pool is created to manage pg_num_min/pg_num_max
+					return `{"pool":"my-store","pool_id":1}{"pool":"my-store","pg_num":8}{"pool":"my-store","pgp_num":8}`, nil
+				}
 				if args[0] == "osd" && args[1] == "pool" && args[2] == "get" {
 					return "", errors.New("test pool does not exit yet")
 				}
