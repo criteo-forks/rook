@@ -613,7 +613,7 @@ rules:
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: objectstorage-provisioner-role
+  name: objectstorage-provisioner-role{{ if .Values.currentNamespaceOnly }}-{{ .Release.Namespace }}{{ end }}
   labels:
     app.kubernetes.io/part-of: container-object-storage-interface
     app.kubernetes.io/component: driver-ceph
