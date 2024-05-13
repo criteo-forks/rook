@@ -136,14 +136,14 @@ roleRef:
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: objectstorage-provisioner-role-binding
+  name: objectstorage-provisioner-role-binding{{ if .Values.currentNamespaceOnly }}-{{ .Release.Namespace }}{{ end }}
   labels:
     app.kubernetes.io/part-of: container-object-storage-interface
     app.kubernetes.io/component: driver-ceph
     app.kubernetes.io/name: cosi-driver-ceph
 subjects:
   - kind: ServiceAccount
-    name: objectstorage-provisioner
+    name: objectstorage-provisioner{{ if .Values.currentNamespaceOnly }}-{{ .Release.Namespace }}{{ end }}
     namespace: {{ .Release.Namespace }} # namespace:operator
 roleRef:
   kind: ClusterRole
