@@ -337,6 +337,28 @@ func (c *clusterConfig) makeDaemonContainer(rgwConfig *rgwConfig) (v1.Container,
 		return v1.Container{}, errors.Wrap(err, "failed to generate default readiness probe")
 	}
 
+	// The following replaces NODE_NAME with the IP of the host
+	// The reason for that is that the mgr dashboard uses metadata 'hostname' for the rgw
+	// as listed in `ceph service dump`. When it is not an IP, the hostnames has to be defined
+	// in the zonegroup allowed hostnames. Which is not possible for kub hostnames.
+	// This information is directly put by the RGW at registration to the mgr
+	// (see ceph src/common/utils.cc collect_sys_info), and is derived from NODE_NAME env variable
+	envVars := controller.DaemonEnvVars(c.clusterSpec)
+	updatedEnvVars := []v1.EnvVar{}
+
+	for _, envVar := range envVars {
+		if envVar.Name != "NODE_NAME" {
+			updatedEnvVars = append(updatedEnvVars, envVar)
+		}
+	}
+
+	nodeNameAsIP := v1.EnvVar{
+		Name:      "NODE_NAME",
+		ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "status.hostIP"}},
+	}
+
+	updatedEnvVars = append(updatedEnvVars, nodeNameAsIP)
+
 	container := v1.Container{
 		Name:            "rgw",
 		Image:           c.clusterSpec.CephVersion.Image,
@@ -359,7 +381,7 @@ func (c *clusterConfig) makeDaemonContainer(rgwConfig *rgwConfig) (v1.Container,
 			controller.DaemonVolumeMounts(c.DataPathMap, rgwConfig.ResourceName, c.clusterSpec.DataDirHostPath),
 			c.mimeTypesVolumeMount(),
 		),
-		Env:             controller.DaemonEnvVars(c.clusterSpec),
+		Env:             updatedEnvVars,
 		Resources:       c.store.Spec.Gateway.Resources,
 		StartupProbe:    startupProbe,
 		LivenessProbe:   noLivenessProbe(),
