@@ -40,10 +40,11 @@ import (
 )
 
 const (
-	serviceAccountName = "rook-ceph-rgw"
-	sseKMS             = "ssekms"
-	sseS3              = "sses3"
-	vaultPrefix        = "/v1/"
+	serviceAccountName                 = "rook-ceph-rgw"
+	criteoServiceAccountNameAnnotation = "crto.in/rook-custom-service-account"
+	sseKMS                             = "ssekms"
+	sseS3                              = "sses3"
+	vaultPrefix                        = "/v1/"
 	//nolint:gosec // since this is not leaking any hardcoded details
 	setupVaultTokenFile = `
 set -e
@@ -138,6 +139,13 @@ func (c *clusterConfig) makeRGWPodSpec(rgwConfig *rgwConfig) (v1.PodTemplateSpec
 		return v1.PodTemplateSpec{}, err
 	}
 
+	finalServiceAccountName, ok := c.store.Spec.Gateway.Annotations[criteoServiceAccountNameAnnotation]
+	if ok {
+		delete(c.store.Spec.Gateway.Annotations, criteoServiceAccountNameAnnotation)
+	} else {
+		finalServiceAccountName = serviceAccountName
+	}
+
 	hostNetwork := c.store.Spec.IsHostNetwork(c.clusterSpec)
 	podSpec := v1.PodSpec{
 		InitContainers: []v1.Container{
@@ -151,7 +159,7 @@ func (c *clusterConfig) makeRGWPodSpec(rgwConfig *rgwConfig) (v1.PodTemplateSpec
 		),
 		HostNetwork:        hostNetwork,
 		PriorityClassName:  c.store.Spec.Gateway.PriorityClassName,
-		ServiceAccountName: serviceAccountName,
+		ServiceAccountName: finalServiceAccountName,
 	}
 
 	// If the log collector is enabled we add the side-car container
