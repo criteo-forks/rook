@@ -22,10 +22,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rook/rook/pkg/operator/ceph/cluster/telemetry"
 	opcontroller "github.com/rook/rook/pkg/operator/ceph/controller"
 	"github.com/rook/rook/pkg/operator/k8sutil"
-	"github.com/rook/rook/pkg/operator/k8sutil/cmdreporter"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/pkg/errors"
@@ -723,63 +721,6 @@ func (r *ReconcileCSI) applyCephClusterNetworkConfig(ctx context.Context, object
 	}
 
 	return nil
-}
-
-// ValidateCSIVersion checks if the configured ceph-csi image is supported
-func (r *ReconcileCSI) validateCSIVersion(ownerInfo *k8sutil.OwnerInfo) (*CephCSIVersion, error) {
-	timeout := 15 * time.Minute
-
-	logger.Infof("detecting the ceph csi image version for image %q", CSIParam.CSIPluginImage)
-
-	versionReporter, err := cmdreporter.New(
-		r.context.Clientset,
-		ownerInfo,
-		detectCSIVersionName,
-		detectCSIVersionName,
-		r.opConfig.OperatorNamespace,
-		[]string{"cephcsi"},
-		[]string{"--version"},
-		r.opConfig.Image,
-		CSIParam.CSIPluginImage,
-		corev1.PullPolicy(CSIParam.ImagePullPolicy),
-	)
-
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to set up ceph CSI version job")
-	}
-
-	job := versionReporter.Job()
-	job.Spec.Template.Spec.ServiceAccountName = r.opConfig.ServiceAccount
-
-	// Apply csi provisioner toleration and affinity for csi version check job
-	job.Spec.Template.Spec.Tolerations = getToleration(r.opConfig.Parameters, provisionerTolerationsEnv, []corev1.Toleration{})
-	job.Spec.Template.Spec.Affinity = &corev1.Affinity{
-		NodeAffinity: getNodeAffinity(r.opConfig.Parameters, provisionerNodeAffinityEnv, &corev1.NodeAffinity{}),
-	}
-
-	stdout, _, retcode, err := versionReporter.Run(r.opManagerContext, timeout)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to complete ceph CSI version job")
-	}
-
-	if retcode != 0 {
-		return nil, errors.Errorf("ceph CSI version job returned %d", retcode)
-	}
-
-	version, err := extractCephCSIVersion(stdout)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to extract ceph CSI version")
-	}
-	logger.Infof("Detected ceph CSI image version: %q", version)
-
-	// Set the CSI version on a package variable so that each cluster reporting the
-	// telemetry can report the same CSI version
-	telemetry.CSIVersion = version.String()
-
-	if !version.Supported() {
-		return nil, errors.Errorf("ceph CSI image needs to be at least version %q", minimum.String())
-	}
-	return version, nil
 }
 
 func (r *ReconcileCSI) configureHolders(enabledDrivers []driverDetails, tp templateParam, pluginTolerations []corev1.Toleration, pluginNodeAffinity *corev1.NodeAffinity) error {

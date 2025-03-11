@@ -44,14 +44,6 @@ func (r *ReconcileCSI) validateAndConfigureDrivers(serverVersion *version.Info, 
 		return errors.Wrapf(err, "failed to validate CSI parameters")
 	}
 
-	if !AllowUnsupported && CSIEnabled() {
-		if v, err = r.validateCSIVersion(ownerInfo); err != nil {
-			return errors.Wrapf(err, "invalid csi version")
-		}
-	} else {
-		logger.Info("skipping csi version check, since unsupported versions are allowed or csi is disabled")
-	}
-
 	if CSIEnabled() {
 		if err = r.startDrivers(serverVersion, ownerInfo, v); err != nil {
 			return errors.Wrap(err, "failed to start ceph csi drivers")
