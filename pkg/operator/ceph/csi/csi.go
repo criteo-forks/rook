@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	cephv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	"github.com/rook/rook/pkg/operator/ceph/cluster/osd/topology"
 	"github.com/rook/rook/pkg/operator/k8sutil"
 
@@ -30,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/version"
 )
 
-func (r *ReconcileCSI) validateAndConfigureDrivers(serverVersion *version.Info, ownerInfo *k8sutil.OwnerInfo) error {
+func (r *ReconcileCSI) validateAndConfigureDrivers(serverVersion *version.Info, ownerInfo *k8sutil.OwnerInfo, resources cephv1.ResourceSpec) error {
 	var (
 		v   *CephCSIVersion
 		err error
@@ -45,7 +46,7 @@ func (r *ReconcileCSI) validateAndConfigureDrivers(serverVersion *version.Info, 
 	}
 
 	if !AllowUnsupported && CSIEnabled() {
-		if v, err = r.validateCSIVersion(ownerInfo); err != nil {
+		if v, err = r.validateCSIVersion(ownerInfo, resources); err != nil {
 			return errors.Wrapf(err, "invalid csi version")
 		}
 	} else {

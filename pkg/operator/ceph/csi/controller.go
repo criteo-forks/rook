@@ -256,7 +256,7 @@ func (r *ReconcileCSI) reconcile(request reconcile.Request) (reconcile.Result, e
 	}
 	CustomCSICephConfigExists = exists
 
-	err = r.validateAndConfigureDrivers(serverVersion, ownerInfo)
+	err = r.validateAndConfigureDrivers(serverVersion, ownerInfo, cephClusters.Items[0].Spec.Resources)
 	if err != nil {
 		return opcontroller.ImmediateRetryResult, errors.Wrap(err, "failed to configure ceph csi")
 	}
