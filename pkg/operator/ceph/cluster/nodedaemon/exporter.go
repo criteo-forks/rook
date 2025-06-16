@@ -137,7 +137,6 @@ func (r *ReconcileNode) createOrUpdateCephExporter(node corev1.Node, tolerations
 				},
 				Tolerations:                   tolerations,
 				RestartPolicy:                 corev1.RestartPolicyAlways,
-				HostNetwork:                   cephCluster.Spec.Network.IsHost(),
 				Volumes:                       volumes,
 				PriorityClassName:             cephv1.GetCephExporterPriorityClassName(cephCluster.Spec.PriorityClassNames),
 				TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
