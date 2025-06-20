@@ -122,7 +122,8 @@ func TestCreateOrUpdateCephExporter(t *testing.T) {
 	podSpec = deploy.Spec.Template
 	assert.Equal(t, "bar", podSpec.ObjectMeta.Labels["foo"])
 	assert.Equal(t, tolerations, podSpec.Spec.Tolerations)
-	assert.Equal(t, true, podSpec.Spec.HostNetwork)
+	// Criteo: ceph-exporter pods always use the pod network, even with cephCluster.Spec.Network.HostNetwork
+	assert.Equal(t, false, podSpec.Spec.HostNetwork)
 	assert.Equal(t, "test-priority-class", podSpec.Spec.PriorityClassName)
 
 	t.Run("exporter config", func(t *testing.T) {

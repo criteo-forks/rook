@@ -124,7 +124,6 @@ func (r *ReconcileNode) createOrUpdateCephExporter(node corev1.Node, tolerations
 		// wait for previous exporter pod to be deleted, before creating a new one
 		// to avoid fighting for the same socket file
 		deploy.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
-		hostNetwork := exporterIsHost(cephCluster)
 		var terminationGracePeriodSeconds int64 = 2
 		deploy.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
@@ -140,7 +139,6 @@ func (r *ReconcileNode) createOrUpdateCephExporter(node corev1.Node, tolerations
 				},
 				Tolerations:                   tolerations,
 				RestartPolicy:                 corev1.RestartPolicyAlways,
-				HostNetwork:                   hostNetwork,
 				Volumes:                       volumes,
 				PriorityClassName:             cephv1.GetCephExporterPriorityClassName(cephCluster.Spec.PriorityClassNames),
 				TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
