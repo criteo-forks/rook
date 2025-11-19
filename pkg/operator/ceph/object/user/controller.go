@@ -20,6 +20,7 @@ package objectuser
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 
 	"github.com/ceph/go-ceph/rgw/admin"
@@ -83,6 +84,11 @@ type ReconcileObjectStoreUser struct {
 // Add creates a new CephObjectStoreUser Controller and adds it to the Manager. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
 func Add(mgr manager.Manager, context *clusterd.Context, opManagerContext context.Context, opConfig opcontroller.OperatorConfig) error {
+	if os.Getenv(object.DisableObjectStoreUserEnvVar) == "true" {
+		logger.Info("skip running Ceph Object Store User controller")
+		return nil
+	}
+
 	return add(mgr, newReconciler(mgr, context, opManagerContext))
 }
 
