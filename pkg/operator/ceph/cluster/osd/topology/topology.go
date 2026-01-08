@@ -42,7 +42,7 @@ var (
 )
 
 const (
-	topologyLabelPrefix = "topology.rook.io/"
+	topologyLabelPrefix = "test.topology.rook.io/"
 	labelHostname       = "kubernetes.io/hostname"
 )
 
