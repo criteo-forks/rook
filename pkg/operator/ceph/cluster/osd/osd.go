@@ -593,15 +593,17 @@ func (c *Cluster) getOSDInfo(d *appsv1.Deployment) (OSDInfo, error) {
 		}
 	}
 
-	locationFound := false
-	osd.Location, locationFound = getOSDLocationFromArgs(container.Args)
+	locationFromArgsFound := false
+	osd.Location, locationFromArgsFound = getOSDLocationFromArgs(container.Args)
 
-	if !locationFound {
-		location, _, err := getLocationFromPod(c.clusterInfo.Context, c.context.Clientset, d, cephclient.GetCrushRootFromSpec(&c.spec))
-		if err != nil {
+	locationFromPod, _, locationFromPodErr := getLocationFromPod(c.clusterInfo.Context, c.context.Clientset, d, cephclient.GetCrushRootFromSpec(&c.spec))
+
+	if !locationFromArgsFound || osd.Location != locationFromPod {
+		if locationFromPodErr != nil {
 			logger.Errorf("failed to get location. %v", err)
 		} else {
-			osd.Location = location
+			logger.Infof("updating location for osd %d to %v", osd.ID, osd.Location)
+			osd.Location = locationFromPod
 		}
 	}
 
