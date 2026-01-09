@@ -598,6 +598,9 @@ func (c *Cluster) getOSDInfo(d *appsv1.Deployment) (OSDInfo, error) {
 
 	locationFromPod, _, locationFromPodErr := getLocationFromPod(c.clusterInfo.Context, c.context.Clientset, d, cephclient.GetCrushRootFromSpec(&c.spec))
 
+	logger.Infof("osd %d location from args is %v", osd.ID, osd.Location)
+	logger.Infof("osd %d location from pod is %v", osd.ID, locationFromPod)
+
 	if !locationFromArgsFound || osd.Location != locationFromPod {
 		if locationFromPodErr != nil {
 			logger.Errorf("failed to get location. %v", err)
