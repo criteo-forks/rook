@@ -49,7 +49,7 @@ import (
 )
 
 var (
-	logger                   = capnslog.NewPackageLogger("github.com/rook/rook", "op-osd")
+	logger                   = capnslog.NewPackageLogger("github.com/rook/rook", "op-osd-test")
 	waitForHealthyPGInterval = 10 * time.Second
 	waitForHealthyPGTimeout  = 15 * time.Minute
 )
@@ -597,6 +597,9 @@ func (c *Cluster) getOSDInfo(d *appsv1.Deployment) (OSDInfo, error) {
 	osd.Location, locationFromArgsFound = getOSDLocationFromArgs(container.Args)
 
 	locationFromPod, _, locationFromPodErr := getLocationFromPod(c.clusterInfo.Context, c.context.Clientset, d, cephclient.GetCrushRootFromSpec(&c.spec))
+
+	logger.Infof("osd %d location from args is %v", osd.ID, osd.Location)
+	logger.Infof("osd %d location from pod is %v", osd.ID, locationFromPod)
 
 	if !locationFromArgsFound || osd.Location != locationFromPod {
 		if locationFromPodErr != nil {
