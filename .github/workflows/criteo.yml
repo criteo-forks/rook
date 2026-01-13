@@ -22,21 +22,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHR_PATH: ./images/ceph/operator.tgz
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.0
-
-      - name: package helm chart
-        run: |
-          helm dependency update deploy/charts/rook-ceph || true
-          helm package deploy/charts/rook-ceph --destination dist
-          helm dependency update deploy/charts/rook-ceph-cluster || true
-          helm package deploy/charts/rook-ceph-cluster --destination dist
-
-      - name: upload rook helm charts
-        uses: fnkr/github-action-ghr@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHR_PATH: ./dist
