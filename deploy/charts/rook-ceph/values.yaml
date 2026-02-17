@@ -583,6 +583,11 @@ enableDiscoveryDaemon: false
 # -- Set the discovery daemon device discovery interval (default to 60m)
 discoveryDaemonInterval: 60m
 
+# Disables the internal object store user management.
+# Set to 'false' to allow Rook to automatically create and manage
+# Ceph Object Gateway (RGW).
+disable_object_store_user: false
+
 # -- The timeout for ceph commands in seconds
 cephCommandsTimeoutSeconds: "15"
 
