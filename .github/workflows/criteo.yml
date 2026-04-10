@@ -10,12 +10,12 @@ jobs:
       - name: checkout
         uses: actions/checkout@v2
 
-      - uses: actions/setup-go@v2
+      - uses: actions/setup-go@v5
         with:
-          go-version: 1.19
+          go-version: "1.22.10"
 
       - name: run build
-        run: GOPATH=$(go env GOPATH) make clean && make -j$nproc IMAGES='ceph' BUILD_CONTAINER_IMAGE=false build
+        run: GOTOOLCHAIN=local GOPATH=$(go env GOPATH) make clean && make -j$nproc IMAGES='ceph' BUILD_CONTAINER_IMAGE=false build
 
       - name: upload ghr
         uses: fnkr/github-action-ghr@v1
