@@ -58,14 +58,23 @@ subjects:
 kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
+  {{- $operatorWatchesCurrentNamespaceOnly := .Values.currentNamespaceOnly | default false -}}
+  {{- if $operatorWatchesCurrentNamespaceOnly }}
+  name: rook-ceph-mgr-system
+  {{- else }}
   name: rook-ceph-mgr-system{{ include "library.suffix-cluster-namespace" . }}
+  {{- end }}
   namespace: {{ .Values.operatorNamespace | default .Release.Namespace }} # namespace:operator
   labels:
     {{- include "library.rook-ceph.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  {{- if $operatorWatchesCurrentNamespaceOnly }}
+  name: rook-ceph-mgr-system{{ include "library.suffix-cluster-namespace" . }}
+  {{- else }}
   name: rook-ceph-mgr-system
+  {{- end }}
 subjects:
   - kind: ServiceAccount
     name: rook-ceph-mgr
