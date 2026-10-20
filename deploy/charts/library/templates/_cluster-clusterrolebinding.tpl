@@ -13,7 +13,7 @@ roleRef:
   name: rook-ceph-mgr-cluster
 subjects:
   - kind: ServiceAccount
-    name: rook-ceph-mgr
+    name: rook-ceph-mgr{{ template "library.suffix-cluster-namespace" . }}
     namespace: {{ .Release.Namespace }} # namespace:cluster
 ---
 # Allow the ceph osd to access cluster-wide resources necessary for determining their topology location
@@ -24,7 +24,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: rook-ceph-osd
+  name: rook-ceph-osd{{ template "library.suffix-cluster-namespace" . }}
 subjects:
   - kind: ServiceAccount
     name: rook-ceph-osd
